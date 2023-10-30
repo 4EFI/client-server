@@ -18,19 +18,22 @@ struct Client
 {
     char name[MaxStrSize];
     int  pid;
+    bool is_available;
 };
 
 const int MaxNumClients = 100;
 
 //-------------------------------------------------------------------
 
-void check_new_clients(Msg_t* msg, int server_id, Client* clients, int* num_clients);
+void check_new_clients  (Msg_t* msg, int server_id, Client* clients, int* num_clients);
+void check_leave_clients(Msg_t* msg, int server_id, Client* clients, int* num_clients);
 
-int get_pid_by_name(Client* clients, int num_clients, char* name);
+int get_pid_by_name(Client* clients, char* name);
+int get_id_by_pid  (Client* clients, int   pid);
 
 void send_msg(Msg_t* msg, int server_id, Client* clients, int num_clients);
 
-void send_all_info(int server_id, Client* clients, int num_clients);
+void send_all_info(int server_id, Client* clients, int num_clients, int type, int id);
 
 //-------------------------------------------------------------------
 
@@ -55,8 +58,9 @@ int main()
 
         if (rcv_size <= 0) continue;
         
-        check_new_clients(&msg, server_id, clients, &num_clients);
-        send_msg         (&msg, server_id, clients,  num_clients);
+        check_new_clients  (&msg, server_id, clients, &num_clients);
+        check_leave_clients(&msg, server_id, clients, &num_clients);
+        send_msg           (&msg, server_id, clients,  num_clients);
     }
 }
 
@@ -64,28 +68,45 @@ int main()
 
 void check_new_clients(Msg_t* msg, int server_id, Client* clients, int* num_clients)
 {
-    if(msg->msg_type != CONNECT_TYPE) return;
+    if (msg->msg_type != CONNECT_TYPE) return;
 
     printf("\"%s\" has been connected.\n", msg->name);
 
     strcpy(clients[*num_clients].name, msg->name);
-    clients[*num_clients].pid = msg->sender;
+    clients[*num_clients].pid          = msg->sender;
+    clients[*num_clients].is_available = true;
 
     msg->receiver = msg->sender;
     msg->sender   = SERVER_ID; 
     msgsnd(server_id, msg, MsgSize, 0);
 
     (*num_clients)++;
-    
-    send_all_info(server_id, clients, *num_clients);
+
+    send_all_info(server_id, clients, *num_clients, CONNECT_TYPE, get_id_by_pid(clients, clients[*num_clients - 1].pid));
 }
 
 //-------------------------------------------------------------------
 
-int get_pid_by_name(Client* clients, int num_clients, char* name)
+void check_leave_clients(Msg_t* msg, int server_id, Client* clients, int* num_clients)
 {
-    for (int i = 0; i < num_clients; i++)
+    if (msg->msg_type != LEAVE_TYPE) return;
+
+    int client_id = get_id_by_pid(clients, msg->sender);
+    clients[client_id].is_available = false;
+
+    (*num_clients)--;
+
+    send_all_info(server_id, clients, *num_clients, LEAVE_TYPE, client_id);
+}
+
+//-------------------------------------------------------------------
+
+int get_pid_by_name(Client* clients, char* name)
+{
+    for (int i = 0; i < MaxNumClients; i++)
     {
+        if(!clients[i].is_available) continue;
+
         if (strcmp(name, clients[i].name) == 0)
         {
             return clients[i].pid;
@@ -97,16 +118,45 @@ int get_pid_by_name(Client* clients, int num_clients, char* name)
 
 //-------------------------------------------------------------------
 
-void send_all_info(int server_id, Client* clients, int num_clients)
+int get_id_by_pid(Client* clients, int pid)
+{
+    for (int i = 0; i < MaxNumClients; i++)
+    {
+        if(!clients[i].is_available) continue;
+        
+        if (pid == clients[i].pid)
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+//-------------------------------------------------------------------
+
+void send_all_info(int server_id, Client* clients, int num_clients, int type, int id)
 {
     Msg_t msg = {0};
-    msg.msg_type = MSG_INFO;
+    msg.msg_type = INFO_TYPE;
+    msg.sender   = SERVER_ID;
     
     int size = 0;
-    for(int i = 0; i < num_clients; i++)
+    if /**/ (type == CONNECT_TYPE)
     {
+        sprintf(msg.data, "Client \"%s\" connected chat!\n%n", clients[id].name, &size);
+    }
+    else if (type == LEAVE_TYPE)
+    {
+        sprintf(msg.data, "Client \"%s\" left chat!\n%n", clients[id].name, &size);
+    }
+    
+    for (int i = 0, k = 0; i < MaxNumClients; i++)
+    {
+        if (!clients[i].is_available) continue;
+
         int tmp_size = 0;
-        sprintf(msg.data + size, "[%d] \"%s\" - %d%n", 
+        sprintf(msg.data + size, "[%d] \"%s\" \t%d%n", 
                 i, 
                 clients[i].name, 
                 clients[i].pid, 
@@ -114,13 +164,16 @@ void send_all_info(int server_id, Client* clients, int num_clients)
 
         size += tmp_size;
 
-        if(i != num_clients - 1) { sprintf(msg.data, "\n"); size++; }
+        if(k != num_clients - 1) { sprintf(msg.data + size, "\n"); size++; }
+        k++;
     }
 
     printf("INFO:\n%s\n", msg.data);
     
-    for(int i = 0; i < num_clients - 1; i++)
+    for (int i = 0; i < MaxNumClients; i++)
     {
+        if (!clients[i].is_available || i == id) continue;
+        
         msg.receiver = clients[i].pid;
         msgsnd(server_id, &msg, MsgSize, 0);
     }
@@ -132,7 +185,7 @@ void send_msg(Msg_t* msg, int server_id, Client* clients, int num_clients)
 {
     if (msg->msg_type != MSG_TYPE) return;
 
-    int receiver = get_pid_by_name(clients, num_clients, msg->receiver_name);
+    int receiver = get_pid_by_name(clients, msg->receiver_name);
     if (receiver == -1) 
     {
         printf("Client \"%s\" does not exist :(\n", msg->receiver_name);

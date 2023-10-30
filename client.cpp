@@ -104,7 +104,16 @@ int main()
                 is_continue = true;
         }
 
-        if (is_break) break;
+        if (is_break) 
+        {
+            Msg_t msg_leave = {0};
+            msg_leave.msg_type = LEAVE_TYPE;
+            msg_leave.receiver = SERVER_ID;
+            msg_leave.sender   = client_pid;
+            msgsnd(server_id, &msg_leave, MsgSize, 0);
+
+            break;
+        }
         if (is_continue) continue;
     }
 }
