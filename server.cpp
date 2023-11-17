@@ -172,7 +172,7 @@ void send_all_info(int server_id, Client* clients, int num_clients, int type, in
     
     for (int i = 0; i < MaxNumClients; i++)
     {
-        if (!clients[i].is_available || i == id) continue;
+        if (!clients[i].is_available) continue;
         
         msg.receiver = clients[i].pid;
         msgsnd(server_id, &msg, MsgSize, 0);
